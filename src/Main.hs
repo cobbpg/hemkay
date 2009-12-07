@@ -1,3 +1,10 @@
-import Loader
+import Sound.PortAudio
 
-main = print =<< loadModule "rocks.mod"
+import Loader
+import Player
+
+main = do
+  initialize
+  song <- loadModule "rocks.mod"
+  playModule song
+  terminate
