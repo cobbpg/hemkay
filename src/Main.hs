@@ -1,10 +1,13 @@
 import Sound.PortAudio
 
+import System.Environment
+
 import Loader
 import Player
 
 main = do
   initialize
-  song <- loadModule "rocks.mod"
+  args <- getArgs
+  song <- loadModule (head args)
   playModule song
   terminate

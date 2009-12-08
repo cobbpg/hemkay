@@ -4,7 +4,7 @@ import Text.Printf
 
 data Song = Song
             { title :: String
-            , samples :: [Sample]
+            , instruments :: [Instrument]
             , patterns :: [Pattern]
             }
 
@@ -17,18 +17,20 @@ instance Show Song where
                                      line <- block]
                              
 
-data Sample = Sample
-              { name :: String
-              , wave :: [Float]
-              , volume :: Int
-              , fineTune :: Int
-              }
+data Instrument = Instrument
+                  { name :: String
+                  , wave :: WaveData
+                  , volume :: Float
+                  , fineTune :: Float
+                  }
 
-instance Show Sample where
-  show (Sample n dat vol ft) = "Instrument: " ++ show n ++
-                               ", samples: " ++ show (take 5 dat) ++
-                               ", volume: " ++ show vol ++
-                               ", finetune: " ++ show ft
+type WaveData = [Float]
+
+instance Show Instrument where
+  show (Instrument n dat vol ft) = "Instrument: " ++ show n ++
+                                   ", samples: " ++ show (take 5 dat) ++
+                                   ", volume: " ++ show vol ++
+                                   ", finetune: " ++ show ft
 
 type Pattern = [[Note]]
 
@@ -60,20 +62,20 @@ data Effect = Arpeggio Int Int
             | Tremolo (Maybe Int) (Maybe Int)
             | FinePanning Int
             | SampleOffset Int
-            | VolumeSlide (Maybe Int)
+            | VolumeSlide (Maybe Float)
             | OrderJump Int
-            | SetVolume Int
+            | SetVolume Float
             | PatternBreak Int
 --            | SetFilter Int
             | FinePortamento PortaParam
 --            | GlissandoControl Int
             | SetVibratoWaveform Waveform
-            | FineTuneControl Int
+            | FineTuneControl Float
             | PatternLoop (Maybe Int)
             | SetTremoloWaveform Waveform
             | GravisPanning Int
             | RetrigNote Int
-            | FineVolumeSlide (Maybe Int)
+            | FineVolumeSlide (Maybe Float)
             | NoteCut Int
             | NoteDelay Int
             | PatternDelay Int

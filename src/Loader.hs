@@ -30,7 +30,7 @@ readModule = runGet $ do
   sampleData <- mapM getBytes $ map getSampleLength sampleInfo
   return $ Song
     { title = name
-    , samples = map mkSample $ zip sampleInfo (map S.unpack sampleData)
+    , instruments = map mkInstrument $ zip sampleInfo (map S.unpack sampleData)
     , patterns = map (patternData !!) orderList
     }
 
@@ -49,7 +49,7 @@ getPatterns count chan = replicateM count (replicateM 64 (replicateM chan getNot
 getNote = do
   [n1,n2,n3,n4] <- replicateM 4 getWord8
   return $ Note
-    { period = fromIntegral $ shift (n1 .&. 0xf) 8 .|. n2
+    { period = fromIntegral (n1 .&. 0xf) * 256 + fromIntegral n2
     , instrument = fromIntegral $ (n1 .&. 0xf0) .|. shift n3 (-4)
     , effect = mkEffect (n3 .&. 0xf) (shift n4 (-4)) (fromIntegral n4 `mod` if n3 == 0xe then 16 else 256)
     }
@@ -57,9 +57,9 @@ getNote = do
 mkEffect 0x0 _   0 = []
 mkEffect 0x0 _   x = [Arpeggio (x `div` 16) (x `mod` 16)]
 mkEffect 0x1 _   0 = [Portamento LastUp]
-mkEffect 0x1 _   x = [Portamento (Porta x)]
+mkEffect 0x1 _   x = [Portamento (Porta (-x))]
 mkEffect 0x2 _   0 = [Portamento LastDown]
-mkEffect 0x2 _   x = [Portamento (Porta (-x))]
+mkEffect 0x2 _   x = [Portamento (Porta x)]
 mkEffect 0x3 _   0 = [TonePortamento Nothing]
 mkEffect 0x3 _   x = [TonePortamento (Just x)]
 mkEffect 0x4 _   x = [uncurry Vibrato (mkWaveSpeed x)]
@@ -70,16 +70,16 @@ mkEffect 0x8 _   x = [FinePanning x]
 mkEffect 0x9 _   x = [SampleOffset (x*256)]
 mkEffect 0xa _   x = [VolumeSlide (mkVolSlide x)]
 mkEffect 0xb _   x = [OrderJump x]
-mkEffect 0xc _   x = [SetVolume x]
+mkEffect 0xc _   x = [SetVolume (fromIntegral x/64)]
 mkEffect 0xd _   x = [PatternBreak x]
 mkEffect 0xe 0x1 0 = [FinePortamento LastUp]
-mkEffect 0xe 0x1 x = [FinePortamento (Porta x)]
+mkEffect 0xe 0x1 x = [FinePortamento (Porta (-x))]
 mkEffect 0xe 0x2 0 = [FinePortamento LastDown]
-mkEffect 0xe 0x2 x = [FinePortamento (Porta (-x))]
+mkEffect 0xe 0x2 x = [FinePortamento (Porta x)]
 mkEffect 0xe 0x4 0 = [SetVibratoWaveform SineWave]
 mkEffect 0xe 0x4 1 = [SetVibratoWaveform SawtoothWave]
 mkEffect 0xe 0x4 2 = [SetVibratoWaveform SquareWave]
-mkEffect 0xe 0x5 x = [FineTuneControl x]
+mkEffect 0xe 0x5 x = [FineTuneControl (mkFineTune x)]
 mkEffect 0xe 0x6 0 = [PatternLoop Nothing]
 mkEffect 0xe 0x6 x = [PatternLoop (Just x)]
 mkEffect 0xe 0x7 0 = [SetTremoloWaveform SineWave]
@@ -89,9 +89,9 @@ mkEffect 0xe 0x8 x = [GravisPanning x]
 mkEffect 0xe 0x9 0 = []
 mkEffect 0xe 0x9 x = [RetrigNote x]
 mkEffect 0xe 0xa 0 = [FineVolumeSlide Nothing]
-mkEffect 0xe 0xa x = [FineVolumeSlide (Just x)]
+mkEffect 0xe 0xa x = [FineVolumeSlide (Just (fromIntegral x/64))]
 mkEffect 0xe 0xb 0 = [FineVolumeSlide Nothing]
-mkEffect 0xe 0xb x = [FineVolumeSlide (Just (-x))]
+mkEffect 0xe 0xb x = [FineVolumeSlide (Just (-fromIntegral x/64))]
 mkEffect 0xe 0xc 0 = []
 mkEffect 0xe 0xc x = [NoteCut x]
 mkEffect 0xe 0xd 0 = []
@@ -102,20 +102,22 @@ mkEffect 0xf _   x = [if x < 32 then SetTempo x else SetBPM x]
 mkEffect _   _   _ = []
 
 mkVolSlide 0 = Nothing
-mkVolSlide x = Just (x `div` 16 - x `mod` 16)
+mkVolSlide x = Just $ fromIntegral (x `div` 16 - x `mod` 16)/64
 
 mkWaveSpeed x = let (a1,a2) = divMod x 16 in (notZero a1,notZero a2)
   where notZero 0 = Nothing
         notZero x = Just x
 
-mkSample ((n,len,ft,vol,lbeg,llen),dat) =
-             Sample { name = n
-                    , wave = if llen <= 2 then dat'
-                             else take lbeg dat' ++ cycle (take llen (drop lbeg dat'))
-                    , volume = vol
-                    , fineTune = ft
-                    }
-               where dat' = map charToFloat dat
+mkInstrument ((n,len,ft,vol,lbeg,llen),dat) =
+  Instrument { name = n
+             , wave = if llen <= 2 then dat'
+                      else take lbeg dat' ++ cycle (take llen (drop lbeg dat'))
+             , volume = fromIntegral vol/64
+             , fineTune = mkFineTune ft
+             }
+    where dat' = map charToFloat dat
+
+mkFineTune x = exp (log 2 * fromIntegral (if x `mod` 16 < 8 then x `mod` 16 else x `mod` 16-16)/96)
 
 charToFloat = unsafePerformIO . readArray floatSamples
 
