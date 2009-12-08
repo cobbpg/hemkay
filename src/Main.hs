@@ -1,5 +1,4 @@
 import Sound.PortAudio
-
 import System.Environment
 
 import Loader

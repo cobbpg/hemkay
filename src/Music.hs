@@ -1,5 +1,6 @@
 module Music where
 
+import Data.Maybe
 import Text.Printf
 
 data Song = Song
@@ -38,50 +39,52 @@ showPattern pat = unlines ["| " ++ concatMap show line | line <- pat]
 
 data Note = Note 
             { period :: Int
-            , instrument :: Int
+            , instrument :: Maybe Instrument
             , effect :: [Effect]
             }
 
 instance Show Note where
   show (Note p i e) = note ++ " " ++ ins ++ " " ++ eff ++ " | "
-    where note = head $ [str ++ show oct |
-                         (oct,pers) <- zip [0..] periodTable,
-                         (per,str) <- zip pers noteNames,
-                         per == p] ++ ["---"]
-          ins = if i == 0 then "--" else printf "%2d" i
-          eff = "---"
+    where note = periodName p
+          ins = maybe "<none>" name i
+          eff = "---" -- Yes, it could be more informative...
+
+periodName p = head $ [str ++ show oct |
+                       (oct,pers) <- zip [0..] periodTable,
+                       (per,str) <- zip pers noteNames,
+                       per == p] ++ ["---"]
 
 data Waveform = SineWave | SawtoothWave | SquareWave deriving Show
 
 data PortaParam = LastUp | LastDown | Porta Int deriving Show
 
-data Effect = Arpeggio Int Int
-            | Portamento PortaParam
-            | TonePortamento (Maybe Int)
-            | Vibrato (Maybe Int) (Maybe Int)
-            | Tremolo (Maybe Int) (Maybe Int)
-            | FinePanning Int
-            | SampleOffset Int
-            | VolumeSlide (Maybe Float)
-            | OrderJump Int
-            | SetVolume Float
-            | PatternBreak Int
---            | SetFilter Int
-            | FinePortamento PortaParam
---            | GlissandoControl Int
-            | SetVibratoWaveform Waveform
-            | FineTuneControl Float
-            | PatternLoop (Maybe Int)
-            | SetTremoloWaveform Waveform
-            | GravisPanning Int
-            | RetrigNote Int
-            | FineVolumeSlide (Maybe Float)
-            | NoteCut Int
-            | NoteDelay Int
-            | PatternDelay Int
---            | FunkRepeat
-            | SetTempo Int 
-            | SetBPM Int
+data Effect = Arpeggio Float Float            -- test!
+            | Portamento PortaParam           -- ok
+            | TonePortamento (Maybe Int)      -- test!
+            | Vibrato (Maybe Int) (Maybe Int) --
+            | Tremolo (Maybe Int) (Maybe Int) --
+            | FinePanning Int                 --
+            | SampleOffset Int                -- ok
+            | VolumeSlide (Maybe Float)       -- ok
+            | OrderJump Int                   --
+            | SetVolume Float                 -- ok
+            | PatternBreak Int                --
+--            | SetFilter Int                 --
+            | FinePortamento PortaParam       -- test!
+--            | GlissandoControl Int          --
+            | SetVibratoWaveform Waveform     --
+            | FineTuneControl Float           --
+            | PatternLoop (Maybe Int)         --
+            | SetTremoloWaveform Waveform     --
+            | GravisPanning Int               --
+            | RetrigNote Int                  --
+            | FineVolumeSlide (Maybe Float)   --
+            | NoteCut Int                     --
+            | NoteDelay Int                   --
+            | PatternDelay Int                --
+--            | FunkRepeat                    --
+            | SetTempo Int                    -- ok
+            | SetBPM Int                      -- ok
             deriving Show
               
 periodTable = [[1712, 1616, 1525, 1440, 1375, 1281, 1209, 1141, 1077, 1017,  961,  907],

@@ -28,10 +28,14 @@ readModule = runGet $ do
   when (isNothing numChannels) (fail "Unknown format")
   patternData <- getPatterns (maximum orderList + 1) (fromJust numChannels)
   sampleData <- mapM getBytes $ map getSampleLength sampleInfo
+  let insList = map mkInstrument $ zip sampleInfo (map S.unpack sampleData)
+      patternData' = (map.map.map) finaliseNote patternData
+      finaliseNote (pit,ins,eff) = Note pit ins' eff
+        where ins' = if ins == 0 then Nothing else Just (insList !! (ins-1))
   return $ Song
     { title = name
-    , instruments = map mkInstrument $ zip sampleInfo (map S.unpack sampleData)
-    , patterns = map (patternData !!) orderList
+    , instruments = insList
+    , patterns = map (patternData' !!) orderList
     }
 
 getString = fmap (takeWhile (/='\0') . S.unpack) . getByteString
@@ -48,14 +52,12 @@ getPatterns count chan = replicateM count (replicateM 64 (replicateM chan getNot
 
 getNote = do
   [n1,n2,n3,n4] <- replicateM 4 getWord8
-  return $ Note
-    { period = fromIntegral (n1 .&. 0xf) * 256 + fromIntegral n2
-    , instrument = fromIntegral $ (n1 .&. 0xf0) .|. shift n3 (-4)
-    , effect = mkEffect (n3 .&. 0xf) (shift n4 (-4)) (fromIntegral n4 `mod` if n3 == 0xe then 16 else 256)
-    }
+  return (fromIntegral (n1 .&. 0xf) * 256 + fromIntegral n2,
+          fromIntegral $ (n1 .&. 0xf0) .|. shift n3 (-4),
+          mkEffect (n3 .&. 0xf) (shift n4 (-4)) (fromIntegral n4 `mod` if n3 == 0xe then 16 else 256))
 
 mkEffect 0x0 _   0 = []
-mkEffect 0x0 _   x = [Arpeggio (x `div` 16) (x `mod` 16)]
+mkEffect 0x0 _   x = [Arpeggio (mkHalfNote (x `div` 16)) (mkHalfNote (x `mod` 16))]
 mkEffect 0x1 _   0 = [Portamento LastUp]
 mkEffect 0x1 _   x = [Portamento (Porta (-x))]
 mkEffect 0x2 _   0 = [Portamento LastDown]
@@ -116,6 +118,8 @@ mkInstrument ((n,len,ft,vol,lbeg,llen),dat) =
              , fineTune = mkFineTune ft
              }
     where dat' = map charToFloat dat
+
+mkHalfNote x = exp (log 2 * fromIntegral x/12)
 
 mkFineTune x = exp (log 2 * fromIntegral (if x `mod` 16 < 8 then x `mod` 16 else x `mod` 16-16)/96)
 
