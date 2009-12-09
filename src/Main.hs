@@ -1,3 +1,5 @@
+-- deps: portaudio, bytestring, binary
+
 import Sound.PortAudio
 import System.Environment
 

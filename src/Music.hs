@@ -78,7 +78,7 @@ data Effect = Arpeggio Float Float            -- test!
             | SetTremoloWaveform Waveform     --
             | GravisPanning Int               --
             | RetrigNote Int                  --
-            | FineVolumeSlide (Maybe Float)   --
+            | FineVolumeSlide (Maybe Float)   -- test!
             | NoteCut Int                     --
             | NoteDelay Int                   --
             | PatternDelay Int                --

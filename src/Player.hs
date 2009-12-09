@@ -15,7 +15,7 @@ baseFrequency :: Float
 baseFrequency = 44100
 
 playModule song = withDefaultStream 0 1 paFloat32 (realToFrac baseFrequency) 0x10000 $ \stream _ -> do
-  forM_ (mixSong song) $ \(state,chunk) -> print state >> writeStream stream chunk 1
+  forM_ (mixSong song) $ \(state,chunk) -> print state >> forM_ chunk (\x -> writeStream stream [x] 1)
 
 data PlayState = PS
                  { psTempo :: Int
@@ -42,6 +42,7 @@ data ChannelState = CS
                     , csTonePortaEnd :: Int
                     , csLastTonePorta :: Int
                     , csLastVolumeSlide :: Float
+                    , csLastFineSlide :: Float
                     }
 
 instance Show ChannelState where
@@ -67,6 +68,7 @@ startState song = PS { psTempo = 6
                  , csTonePortaEnd = 0
                  , csLastTonePorta = 0
                  , csLastVolumeSlide = 0
+                 , csLastFineSlide = 0
                  }
 
 {-
@@ -78,8 +80,6 @@ startState song = PS { psTempo = 6
   PatternLoop     : Boolean;
   Panning         : Array[1..8] Of ShortInt;
   Surround        : Array[1..8] Of Boolean;
-  LastVolumeSlide : Array[1..8] Of Byte;
-  LastFineSlide   : Array[1..8] Of Byte;
   LastVibrato     : Array[1..8] Of Byte;
   LastTremolo     : Array[1..8] Of Byte;
   VibratoTable    : WavePtr;
@@ -121,25 +121,31 @@ mixSong song = tail $ scanl mkChunk (startState song,[]) (concat (patterns song)
                           [FinePortamento (Porta p)] -> (addPitch cs p) { csLastFinePorta = abs p }
                           [FinePortamento LastUp] -> addPitch cs (-csLastFinePorta cs')
                           [FinePortamento LastDown] -> addPitch cs (csLastFinePorta cs')
+                          [FineVolumeSlide x] -> let slide = fromMaybe (csLastFineSlide cs) x in 
+                            cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
+                               , csLastFineSlide = slide
+                               }
                           _ -> cs'
                                               
         wrt i xs e = let (pre,_:post) = splitAt i xs in pre ++ e:post
 
 mixChunk ps = (concatMap snd chunks, fst (last chunks))
-  where chunks = processTicks (psTempo ps) ps True
+  where chunks = {-# SCC "chunks" #-} processTicks (psTempo ps) ps True
         tickLength = round (baseFrequency*2.5) `div` psBPM ps
         chnFact = 1 / fromIntegral (length (psChannels ps))
         processTicks 0    _  _       = []
         processTicks tick ps isFirst = (ps',mixResult) : processTicks (tick-1) ps' False
-          where mixResult = map (\s -> [chnFact*s]) mixedChannels
-                mixedChannels = foldl' addChannel (replicate tickLength 0) (psChannels ps)
+          where mixResult = {-# SCC "mixResult" #-} map (\s -> [chnFact*s]) mixedChannels
+                mixedChannels = {-# SCC "mixedChannels" #-} foldl' addChannel (replicate tickLength 0) (psChannels ps)
                 
-                addChannel mix cs = mixChannel mix (csWaveData cs) (csSubSample cs)
+                addChannel mix cs = {-# SCC "addChannel" #-} if vol < 0.0001 then mix
+                                    else mixChannel mix (csWaveData cs) (csSubSample cs)
                   where step = csSampleStep cs
                         vol = csVolume cs
                         mixChannel []     wd smp = []
+                        mixChannel ms     [] smp = ms
                         mixChannel (m:ms) wd smp = wsmp `seq` wsmp : mixChannel ms wd' smp'
-                          where wsmp = m + if null wd then 0 else head wd*vol
+                          where wsmp = m + head wd*vol
                                 (wd',smp') = adv wd (smp+step) -- because properFraction is too slow
                                 adv [] s = ([],s)
                                 adv ws s | s >= 1    = adv (tail ws) (s-1)
@@ -147,12 +153,12 @@ mixChunk ps = (concatMap snd chunks, fst (last chunks))
                 
                 ps' = ps { psChannels = cs'' }
                 cs' = map advChannel (psChannels ps)
-                advChannel cs = cs { csWaveData = drop wdstep (csWaveData cs)
+                advChannel cs = {-# SCC "advChannel" #-} cs { csWaveData = drop wdstep (csWaveData cs)
                                    , csSubSample = smp'
                                    }
                   where (wdstep,smp') = properFraction (csSubSample cs+csSampleStep cs*fromIntegral tickLength)
                 cs'' = if isFirst then cs' else flip map cs' $ \cs -> foldl' addEffect cs (csEffect cs)
-                addEffect cs eff = case eff of
+                addEffect cs eff = {-# SCC "addEffect" #-} case eff of
                   Arpeggio n1 n2 ->
                     cs { csSampleStep = sampleStep (csPitch cs) (csFineTune cs) * ([1,n1,n2] !! ((psTempo ps-tick) `mod` 3))
                        }
