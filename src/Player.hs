@@ -1,6 +1,7 @@
 module Player where
 
 import Control.Monad
+import Control.Monad.Fix
 import Data.List
 import Data.Maybe
 import Sound.PortAudio
@@ -8,14 +9,19 @@ import Text.Printf
 
 import Music
 
-basePeriod :: Float
 basePeriod = 3546894.6
 
-baseFrequency :: Float
 baseFrequency = 44100
 
-playModule song = withDefaultStream 0 1 paFloat32 (realToFrac baseFrequency) 0x10000 $ \stream _ -> do
+bufferLength = 0x1000
+
+playModule song = withDefaultStream 0 1 paFloat32 (realToFrac baseFrequency) bufferLength $ \stream _ -> do
+  --flip fix (concatMap snd (mixSong song)) $ \consume waveData -> do
+  --  let (chunk,rest) = splitAt bufferLength waveData
+  --  writeStream stream chunk bufferLength
+  --  when (not (null rest)) $ consume rest
   forM_ (mixSong song) $ \(state,chunk) -> print state >> forM_ chunk (\x -> writeStream stream [x] 1)
+  --writeStream stream chunk bufferLength
 
 data PlayState = PS
                  { psTempo :: Int
@@ -34,19 +40,23 @@ data ChannelState = CS
                     , csSampleStep :: Float
                     , csVolume :: Float
                     , csInstrument :: Instrument
-                    , csNextInstrument :: Instrument
+--                    , csNextInstrument :: Instrument
                     , csEffect :: [Effect]
-                    , csLastPortaDown :: Int
-                    , csLastPortaUp :: Int
-                    , csLastFinePorta :: Int
+                    , csPortaDown :: Int
+                    , csPortaUp :: Int
+                    , csFinePorta :: Int
                     , csTonePortaEnd :: Int
-                    , csLastTonePorta :: Int
-                    , csLastVolumeSlide :: Float
-                    , csLastFineSlide :: Float
+                    , csTonePortaSpeed :: Int
+                    , csVolumeSlide :: Float
+                    , csFineVolumeSlide :: Float
+                    , csVibratoSpeed :: Int
+                    , csVibratoAmp :: Float
+                    , csVibratoWave :: [Int]
                     }
 
 instance Show ChannelState where
-  show cs = printf "<%s %2d %s>" (periodName (csPitch cs)) (round (csVolume cs*99) :: Int) (show (csEffect cs))
+  show cs = printf "<%s %02d %02d %s>" (periodName (csPitch cs)) (ident (csInstrument cs))
+            (round (csVolume cs*99) :: Int) (show (csEffect cs))
 
 startState song = PS { psTempo = 6
                      , psBPM = 125
@@ -59,16 +69,19 @@ startState song = PS { psTempo = 6
                  , csSubSample = 0
                  , csSampleStep = 0
                  , csVolume = 1
-                 , csInstrument = undefined
-                 , csNextInstrument = undefined
+                 , csInstrument = emptyInstrument
+--                 , csNextInstrument = emptyInstrument
                  , csEffect = []
-                 , csLastPortaDown = 0
-                 , csLastPortaUp = 0
-                 , csLastFinePorta = 0
+                 , csPortaDown = 0
+                 , csPortaUp = 0
+                 , csFinePorta = 0
                  , csTonePortaEnd = 0
-                 , csLastTonePorta = 0
-                 , csLastVolumeSlide = 0
-                 , csLastFineSlide = 0
+                 , csTonePortaSpeed = 0
+                 , csVolumeSlide = 0
+                 , csFineVolumeSlide = 0
+                 , csVibratoSpeed = 0
+                 , csVibratoAmp = 0
+                 , csVibratoWave = snd (head waveData)
                  }
 
 {-
@@ -80,18 +93,28 @@ startState song = PS { psTempo = 6
   PatternLoop     : Boolean;
   Panning         : Array[1..8] Of ShortInt;
   Surround        : Array[1..8] Of Boolean;
-  LastVibrato     : Array[1..8] Of Byte;
   LastTremolo     : Array[1..8] Of Byte;
-  VibratoTable    : WavePtr;
   TremoloTable    : WavePtr;
-  VibratoCounter  : Array[1..8] Of Byte;
   TremoloCounter  : Array[1..8] Of Byte;
-  NewOrder, NewRow: Byte;
-  CurrentNote     : Array[1..4] Of Byte;
+  NewOrder        : Byte;
 -}
 
-mixSong song = tail $ scanl mkChunk (startState song,[]) (concat (patterns song))
-  where mkChunk (ps,_) line = (ps'',chunk)
+mixSong song = tail $ scanl mkChunk (startState song,[]) (flattenRows (patterns song))
+  where flattenRows = concat . handleDelays . handleBreaks 0
+        handleBreaks _ [] = []
+        handleBreaks row (pat:pats) = (pat' ++ take 1 rest) : handleBreaks row' pats
+          where (pat',rest) = span (all (isNothing . getBreak)) (drop row pat)
+                row' = head ([b | Just b <- map getBreak (last pat')] ++ [0])
+                getBreak note = case effect note of
+                  [PatternBreak b] -> Just b
+                  _ -> Nothing
+        handleDelays pat = map (concatMap (\r -> replicate (delayCount r) r)) pat
+          where delayCount r = head ([d+1 | Just d <- map getDelay r] ++ [1])
+                getDelay note = case effect note of
+                  [PatternDelay d] -> Just d
+                  _ -> Nothing
+                
+        mkChunk (ps,_) line = (ps'',chunk)
           where ps' = foldl' processNote ps $ zip [0..] line
                 (chunk,ps'') = mixChunk ps'
                 processNote ps (i,Note ptc ins eff) = ps { psTempo = tempo'
@@ -103,7 +126,11 @@ mixSong song = tail $ scanl mkChunk (startState song,[]) (concat (patterns song)
                         cs = psChannels ps !! i
                         ins' = fromMaybe (csInstrument cs) ins
                         cs' = if ptc == 0 then cs
-                               else cs { csWaveData = drop (case eff of { [SampleOffset o] -> o; _ -> 0 }) (wave ins')
+                               else cs { csWaveData = case eff of
+                                         (TonePortamento _:_) -> if ins == Just (csInstrument cs)
+                                                                 then csWaveData cs else (wave ins')
+                                         [SampleOffset o] -> drop o (wave ins')
+                                         _ -> wave ins'
                                        , csPitch = case eff of
                                          (TonePortamento _:_) -> csPitch cs
                                          _ -> ptc
@@ -117,28 +144,35 @@ mixSong song = tail $ scanl mkChunk (startState song,[]) (concat (patterns song)
                                          _ -> csTonePortaEnd cs
                                        }
                         cs'' = case eff of
+                          (Vibrato spd amp:_) ->
+                            cs' { csVibratoSpeed = fromMaybe (csVibratoSpeed cs') spd
+                                , csVibratoAmp = maybe (csVibratoAmp cs') ((/8).fromIntegral) amp
+                                }
                           [SetVolume v] -> cs' { csVolume = v }
-                          [FinePortamento (Porta p)] -> (addPitch cs p) { csLastFinePorta = abs p }
-                          [FinePortamento LastUp] -> addPitch cs (-csLastFinePorta cs')
-                          [FinePortamento LastDown] -> addPitch cs (csLastFinePorta cs')
-                          [FineVolumeSlide x] -> let slide = fromMaybe (csLastFineSlide cs) x in 
+                          [FinePortamento (Porta p)] -> (addPitch cs p) { csFinePorta = abs p }
+                          [FinePortamento LastUp] -> addPitch cs (-csFinePorta cs')
+                          [FinePortamento LastDown] -> addPitch cs (csFinePorta cs')
+                          [SetVibratoWaveform wf] -> cs { csVibratoWave = (snd.fromJust) (find ((==wf).fst) waveData) }
+                          [FineVolumeSlide x] -> let slide = fromMaybe (csFineVolumeSlide cs) x in 
                             cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
-                               , csLastFineSlide = slide
+                               , csFineVolumeSlide = slide
                                }
+                          [FineTuneControl ft] -> addPitch cs { csFineTune = ft } 0
                           _ -> cs'
                                               
         wrt i xs e = let (pre,_:post) = splitAt i xs in pre ++ e:post
 
 mixChunk ps = (concatMap snd chunks, fst (last chunks))
-  where chunks = {-# SCC "chunks" #-} processTicks (psTempo ps) ps True
+  where chunks = processTicks (psTempo ps) ps True
         tickLength = round (baseFrequency*2.5) `div` psBPM ps
         chnFact = 1 / fromIntegral (length (psChannels ps))
         processTicks 0    _  _       = []
         processTicks tick ps isFirst = (ps',mixResult) : processTicks (tick-1) ps' False
-          where mixResult = {-# SCC "mixResult" #-} map (\s -> [chnFact*s]) mixedChannels
-                mixedChannels = {-# SCC "mixedChannels" #-} foldl' addChannel (replicate tickLength 0) (psChannels ps)
+          where mixResult = map (\s -> [chnFact*s]) mixedChannels
+                mixedChannels = foldl' addChannel (replicate tickLength 0) (psChannels ps)
+                curTick = psTempo ps-tick
                 
-                addChannel mix cs = {-# SCC "addChannel" #-} if vol < 0.0001 then mix
+                addChannel mix cs = if vol < 0.0001 then mix
                                     else mixChannel mix (csWaveData cs) (csSubSample cs)
                   where step = csSampleStep cs
                         vol = csVolume cs
@@ -153,28 +187,35 @@ mixChunk ps = (concatMap snd chunks, fst (last chunks))
                 
                 ps' = ps { psChannels = cs'' }
                 cs' = map advChannel (psChannels ps)
-                advChannel cs = {-# SCC "advChannel" #-} cs { csWaveData = drop wdstep (csWaveData cs)
+                advChannel cs = cs { csWaveData = drop wdstep (csWaveData cs)
                                    , csSubSample = smp'
                                    }
                   where (wdstep,smp') = properFraction (csSubSample cs+csSampleStep cs*fromIntegral tickLength)
-                cs'' = if isFirst then cs' else flip map cs' $ \cs -> foldl' addEffect cs (csEffect cs)
-                addEffect cs eff = {-# SCC "addEffect" #-} case eff of
+                cs'' = if isFirst then cs' else flip map cs' $ \cs -> foldl' addEffect cs (csEffect cs)                
+                addEffect cs eff = case eff of
                   Arpeggio n1 n2 ->
-                    cs { csSampleStep = sampleStep (csPitch cs) (csFineTune cs) * ([1,n1,n2] !! ((psTempo ps-tick) `mod` 3))
+                    cs { csSampleStep = sampleStep (csPitch cs) (csFineTune cs) * ([1,n1,n2] !! (curTick `mod` 3))
                        }
                   Portamento (Porta p) -> let pitch = clampPitch (csPitch cs + p) in
                     cs { csPitch = pitch
                        , csSampleStep = sampleStep pitch (csFineTune cs)
-                       , csLastPortaDown = if p > 0 then p else csLastPortaDown cs
-                       , csLastPortaUp = if p < 0 then p else csLastPortaUp cs }
-                  Portamento LastUp -> addPitch cs (csLastPortaUp cs)
-                  Portamento LastDown -> addPitch cs (csLastPortaDown cs)
-                  TonePortamento (Just p) -> targetPitch cs { csLastTonePorta = p }
+                       , csPortaDown = if p > 0 then p else csPortaDown cs
+                       , csPortaUp = if p < 0 then p else csPortaUp cs }
+                  Portamento LastUp -> addPitch cs (csPortaUp cs)
+                  Portamento LastDown -> addPitch cs (csPortaDown cs)
+                  TonePortamento (Just p) -> targetPitch cs { csTonePortaSpeed = p }
                   TonePortamento Nothing -> targetPitch cs
-                  VolumeSlide x -> let slide = fromMaybe (csLastVolumeSlide cs) x in 
-                    cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
-                       , csLastVolumeSlide = slide
+                  Vibrato _ _ -> let pitch = fromIntegral (csPitch cs) +
+                                             fromIntegral (head (csVibratoWave cs)) * csVibratoAmp cs in
+                    cs { csSampleStep = sampleStep' pitch (csFineTune cs)
+                       , csVibratoWave = drop (csVibratoSpeed cs) (csVibratoWave cs)
                        }
+                  VolumeSlide x -> let slide = fromMaybe (csVolumeSlide cs) x in 
+                    cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
+                       , csVolumeSlide = slide
+                       }
+                  RetrigNote r -> if curTick `mod` r == 0 then cs { csWaveData = wave (csInstrument cs) } else cs
+                  NoteCut c -> if curTick == c then cs { csWaveData = [] } else cs
                   _ -> cs
                 
 addPitch cs p = let pitch = clampPitch (csPitch cs + p) in
@@ -183,13 +224,15 @@ addPitch cs p = let pitch = clampPitch (csPitch cs + p) in
      }
 
 targetPitch cs = let pitch = if csPitch cs > csTonePortaEnd cs
-                             then max (csTonePortaEnd cs) (csPitch cs-csLastTonePorta cs) 
-                             else min (csTonePortaEnd cs) (csPitch cs+csLastTonePorta cs) 
+                             then max (csTonePortaEnd cs) (csPitch cs-csTonePortaSpeed cs) 
+                             else min (csTonePortaEnd cs) (csPitch cs+csTonePortaSpeed cs) 
                  in
   cs { csPitch = pitch
      , csSampleStep = sampleStep pitch (csFineTune cs)
      }
 
 sampleStep p ft = basePeriod / (fromIntegral p * baseFrequency) * ft
+
+sampleStep' p ft = basePeriod / (p * baseFrequency) * ft
 
 clampPitch = min 1712 . max 57

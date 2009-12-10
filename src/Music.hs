@@ -19,7 +19,8 @@ instance Show Song where
                              
 
 data Instrument = Instrument
-                  { name :: String
+                  { ident :: Int
+                  , name :: String
                   , wave :: WaveData
                   , volume :: Float
                   , fineTune :: Float
@@ -27,11 +28,22 @@ data Instrument = Instrument
 
 type WaveData = [Float]
 
+instance Eq Instrument where
+  i1 == i2 = ident i1 == ident i2
+
 instance Show Instrument where
-  show (Instrument n dat vol ft) = "Instrument: " ++ show n ++
-                                   ", samples: " ++ show (take 5 dat) ++
-                                   ", volume: " ++ show vol ++
-                                   ", finetune: " ++ show ft
+  show (Instrument _ n dat vol ft) = "Instrument: " ++ show n ++
+                                     ", samples: " ++ show (take 5 dat) ++
+                                     ", volume: " ++ show vol ++
+                                     ", finetune: " ++ show ft
+
+emptyInstrument = Instrument
+                  { ident = 0
+                  , name = ""
+                  , wave = []
+                  , volume = 0
+                  , fineTune = 1
+                  }
 
 type Pattern = [[Note]]
 
@@ -54,34 +66,34 @@ periodName p = head $ [str ++ show oct |
                        (per,str) <- zip pers noteNames,
                        per == p] ++ ["---"]
 
-data Waveform = SineWave | SawtoothWave | SquareWave deriving Show
+data Waveform = SineWave | SawtoothWave | SquareWave deriving (Show, Eq)
 
 data PortaParam = LastUp | LastDown | Porta Int deriving Show
 
 data Effect = Arpeggio Float Float            -- test!
             | Portamento PortaParam           -- ok
             | TonePortamento (Maybe Int)      -- test!
-            | Vibrato (Maybe Int) (Maybe Int) --
+            | Vibrato (Maybe Int) (Maybe Int) -- test!
             | Tremolo (Maybe Int) (Maybe Int) --
             | FinePanning Int                 --
             | SampleOffset Int                -- ok
             | VolumeSlide (Maybe Float)       -- ok
             | OrderJump Int                   --
             | SetVolume Float                 -- ok
-            | PatternBreak Int                --
+            | PatternBreak Int                -- ok
 --            | SetFilter Int                 --
             | FinePortamento PortaParam       -- test!
 --            | GlissandoControl Int          --
-            | SetVibratoWaveform Waveform     --
-            | FineTuneControl Float           --
+            | SetVibratoWaveform Waveform     -- test!
+            | FineTuneControl Float           -- ok
             | PatternLoop (Maybe Int)         --
             | SetTremoloWaveform Waveform     --
             | GravisPanning Int               --
-            | RetrigNote Int                  --
-            | FineVolumeSlide (Maybe Float)   -- test!
-            | NoteCut Int                     --
+            | RetrigNote Int                  -- ok
+            | FineVolumeSlide (Maybe Float)   -- ok
+            | NoteCut Int                     -- test!
             | NoteDelay Int                   --
-            | PatternDelay Int                --
+            | PatternDelay Int                -- test!
 --            | FunkRepeat                    --
             | SetTempo Int                    -- ok
             | SetBPM Int                      -- ok
@@ -95,17 +107,18 @@ periodTable = [[1712, 1616, 1525, 1440, 1375, 1281, 1209, 1141, 1077, 1017,  961
 
 noteNames = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
 
-waveData = [(SineWave,
+waveData :: [(Waveform, [Int])]
+waveData = [(SineWave, cycle
              [ -1,  1,  3,  4,  5,  7,  8,  9, 10, 11, 12, 13, 14, 14, 15, 15
              , 15, 15, 15, 14, 14, 13, 12, 11, 10,  9,  8,  7,  5,  4,  3,  1
              , -1, -2, -4, -5, -6, -8, -9,-10,-11,-12,-13,-14,-15,-15,-16,-16
              ,-16,-16,-16,-15,-15,-14,-13,-12,-11,-10, -9, -8, -6, -5, -4, -2])
-           ,(SawtoothWave,             
+           ,(SawtoothWave, cycle           
              [ 15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10,  9,  9,  8,  8
              ,  7,  7,  6,  6,  5,  5,  4,  4,  3,  3,  2,  2,  1,  1,  0,  0
              , -1, -1, -2, -2, -3, -3, -4, -4, -5, -5, -6, -6, -7, -7, -8, -8
              , -9, -9,-10,-10,-11,-11,-12,-12,-13,-13,-14,-14,-15,-15,-16,-16])
-           ,(SquareWave,
+           ,(SquareWave, cycle
              [ 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
              , 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
              ,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16

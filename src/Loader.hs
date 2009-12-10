@@ -28,7 +28,7 @@ readModule = runGet $ do
   when (isNothing numChannels) (fail "Unknown format")
   patternData <- getPatterns (maximum orderList + 1) (fromJust numChannels)
   sampleData <- mapM getBytes $ map getSampleLength sampleInfo
-  let insList = map mkInstrument $ zip sampleInfo (map S.unpack sampleData)
+  let insList = map mkInstrument $ zip3 sampleInfo (map S.unpack sampleData) [1..]
       patternData' = (map.map.map) finaliseNote patternData
       finaliseNote (pit,ins,eff) = Note pit ins' eff
         where ins' = if ins == 0 then Nothing else Just (insList !! (ins-1))
@@ -54,7 +54,7 @@ getNote = do
   [n1,n2,n3,n4] <- replicateM 4 getWord8
   return (fromIntegral (n1 .&. 0xf) * 256 + fromIntegral n2,
           fromIntegral $ (n1 .&. 0xf0) .|. shift n3 (-4),
-          mkEffect (n3 .&. 0xf) (shift n4 (-4)) (fromIntegral n4 `mod` if n3 == 0xe then 16 else 256))
+          mkEffect (n3 .&. 0xf) (shift n4 (-4)) (fromIntegral n4 `mod` if n3 .&. 0xf == 0xe then 16 else 256))
 
 mkEffect 0x0 _   0 = []
 mkEffect 0x0 _   x = [Arpeggio (mkHalfNote (x `div` 16)) (mkHalfNote (x `mod` 16))]
@@ -64,10 +64,10 @@ mkEffect 0x2 _   0 = [Portamento LastDown]
 mkEffect 0x2 _   x = [Portamento (Porta x)]
 mkEffect 0x3 _   0 = [TonePortamento Nothing]
 mkEffect 0x3 _   x = [TonePortamento (Just x)]
-mkEffect 0x4 _   x = [uncurry Vibrato (mkWaveSpeed x)]
+mkEffect 0x4 _   x = [uncurry Vibrato (mkWaveData x)]
 mkEffect 0x5 _   x = [TonePortamento Nothing, VolumeSlide (mkVolSlide x)]
 mkEffect 0x6 _   x = [Vibrato Nothing Nothing, VolumeSlide (mkVolSlide x)]
-mkEffect 0x7 _   x = [uncurry Tremolo (mkWaveSpeed x)]
+mkEffect 0x7 _   x = [uncurry Tremolo (mkWaveData x)]
 mkEffect 0x8 _   x = [FinePanning x]
 mkEffect 0x9 _   x = [SampleOffset (x*256)]
 mkEffect 0xa _   x = [VolumeSlide (mkVolSlide x)]
@@ -106,12 +106,13 @@ mkEffect _   _   _ = []
 mkVolSlide 0 = Nothing
 mkVolSlide x = Just $ fromIntegral (x `div` 16 - x `mod` 16)/64
 
-mkWaveSpeed x = let (a1,a2) = divMod x 16 in (notZero a1,notZero a2)
+mkWaveData x = let (a1,a2) = divMod x 16 in (notZero a1,notZero a2)
   where notZero 0 = Nothing
         notZero x = Just x
 
-mkInstrument ((n,len,ft,vol,lbeg,llen),dat) =
-  Instrument { name = n
+mkInstrument ((n,len,ft,vol,lbeg,llen),dat,id) =
+  Instrument { ident = id
+             , name = n
              , wave = if llen <= 2 then dat'
                       else take lbeg dat' ++ cycle (take llen (drop lbeg dat'))
              , volume = fromIntegral vol/64
