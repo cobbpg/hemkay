@@ -56,17 +56,19 @@ data Note = Note
             }
 
 instance Show Note where
-  show (Note p i e) = note ++ " " ++ ins ++ " " ++ eff ++ " | "
-    where note = periodName p
-          ins = maybe "<none>" name i
-          eff = "---" -- Yes, it could be more informative...
+  show (Note p i e) = printf "%s %02d %s | " (periodName p) (maybe 0 ident i) (show e)
 
 periodName p = head $ [str ++ show oct |
                        (oct,pers) <- zip [0..] periodTable,
                        (per,str) <- zip pers noteNames,
                        per == p] ++ ["---"]
 
-data Waveform = SineWave | SawtoothWave | SquareWave deriving (Show, Eq)
+data Waveform = SineWave | SawtoothWave | SquareWave deriving Eq
+
+instance Show Waveform where
+  show SineWave = "sin"
+  show SawtoothWave = "swt"
+  show SquareWave = "sqr"
 
 data PortaParam = LastUp | LastDown | Porta Int deriving Show
 
@@ -97,8 +99,51 @@ data Effect = Arpeggio Float Float            -- test!
 --            | FunkRepeat                    --
             | SetTempo Int                    -- ok
             | SetBPM Int                      -- ok
-            deriving Show
               
+instance Show Effect where
+  show (Arpeggio a1 a2) = printf "arp %x %x" (unhalf a1) (unhalf a2)
+    where unhalf x = round (log x / log 2 * 12) :: Int
+  show (Portamento LastUp) = "por ^^^"
+  show (Portamento LastDown) = "por vvv"
+  show (Portamento (Porta p)) = printf "por %3d" p
+  show (TonePortamento Nothing) = "ton ..."
+  show (TonePortamento (Just p)) = printf "ton %3d" p
+  show (Vibrato amp spd) = printf "vib %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
+  show (Tremolo amp spd) = printf "trm %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
+  show (FinePanning p) = printf "<=> %3d" p
+  show (SampleOffset o) = printf "ofs $%2x" (o `div` 256)
+  show (VolumeSlide Nothing) = "vsl ..."
+  show (VolumeSlide (Just s)) = printf "vsl %3d" (round (s*99) :: Int)
+  show (OrderJump o) = printf "ord %3d" o
+  show (SetVolume v) = printf "vol %3d" (round (v*99) :: Int)
+  show (PatternBreak b) = printf "brk %3d" b
+  show (FinePortamento LastUp) = "por!^^^"
+  show (FinePortamento LastDown) = "por!vvv"
+  show (FinePortamento (Porta p)) = printf "por!%3d" p
+  show (SetVibratoWaveform w) = "vib " ++ show w
+  show (FineTuneControl ft) = "fin    "
+  show (PatternLoop Nothing) = "lop beg"
+  show (PatternLoop (Just c)) = printf "lop %3d" c
+  show (SetTremoloWaveform w) = "trm " ++ show w
+  show (GravisPanning p) = printf "<=> %3d" (p*8)
+  show (RetrigNote r) = printf "ret %3d" r
+  show (FineVolumeSlide Nothing) = "vsl!..."
+  show (FineVolumeSlide (Just s)) = printf "vsl!%3d" (round (s*99) :: Int)
+  show (NoteCut c) = printf "cut %3d" c
+  show (NoteDelay d) = printf "ndl %3d" d
+  show (PatternDelay d) = printf "pdl %3d" d
+  show (SetTempo t) = printf "tmp %3d" t
+  show (SetBPM b) = printf "bpm %3d" b
+  
+  showList [] = showString "       "
+  showList [eff] = shows eff
+  showList [TonePortamento _, VolumeSlide Nothing] = showString "tvs ---"
+  showList [TonePortamento _, VolumeSlide (Just s)] = showString (printf "tvs %3d" (round (s*99) :: Int))
+  showList [Vibrato _ _, VolumeSlide Nothing] = showString "vvs ---"
+  showList [Vibrato _ _, VolumeSlide (Just s)] = showString (printf "vvs %3d" (round (s*99) :: Int))
+  showList _ = showString "???????"
+
+
 periodTable = [[1712, 1616, 1525, 1440, 1375, 1281, 1209, 1141, 1077, 1017,  961,  907],
                [ 856,  808,  762,  720,  678,  640,  604,  570,  538,  508,  480,  453],
                [ 428,  404,  381,  360,  339,  320,  302,  285,  269,  254,  240,  226],

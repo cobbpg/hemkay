@@ -125,10 +125,16 @@ mixSong song = tail $ scanl mkChunk (startState song,[]) (flattenRows (patterns 
                         bpm' = case eff of { [SetBPM x] -> x ; _ -> psBPM ps }
                         cs = psChannels ps !! i
                         ins' = fromMaybe (csInstrument cs) ins
-                        cs' = if ptc == 0 then cs
+                        
+                        -- This part really needs to be cleaned up...
+                        cs' = if ptc == 0 then cs { csInstrument = ins'
+                                                  , csVolume = if isJust ins then volume ins' else csVolume cs
+                                                  , csWaveData = if isNothing ins || ins == Just (csInstrument cs)
+                                                                 then csWaveData cs else wave ins'
+                                                  }
                                else cs { csWaveData = case eff of
                                          (TonePortamento _:_) -> if ins == Just (csInstrument cs)
-                                                                 then csWaveData cs else (wave ins')
+                                                                 then csWaveData cs else wave ins'
                                          [SampleOffset o] -> drop o (wave ins')
                                          _ -> wave ins'
                                        , csPitch = case eff of
