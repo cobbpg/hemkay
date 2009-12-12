@@ -3,6 +3,9 @@ module Player where
 import Control.Monad
 import Control.Monad.Fix
 import Data.List
+--import Prelude hiding (replicate,head,concat,map,(++),take,span,null,drop,last,
+--                       concatMap,zipWith,(!!),tail,scanl,zip,splitAt,length)
+--import Data.List.Stream
 import Data.Maybe
 import Sound.PortAudio
 import Text.Printf
@@ -20,8 +23,14 @@ playModule song = withDefaultStream 0 1 paFloat32 (realToFrac baseFrequency) buf
   --  let (chunk,rest) = splitAt bufferLength waveData
   --  writeStream stream chunk bufferLength
   --  when (not (null rest)) $ consume rest
-  forM_ (mixSong song) $ \(state,chunk) -> print state >> forM_ chunk (\x -> writeStream stream [x] 1)
-  --writeStream stream chunk bufferLength
+
+  flip fix (0,mixSong song) $ \playback (tick,chunks) -> unless (null chunks) $ do
+    let (state,chunk):rest = chunks
+    forM_ chunk $ \x -> writeStream stream [x] 1
+    if tick <= 0 then print state >> playback (psTempo state-1,rest)
+      else playback (tick-1,rest)
+
+  --forM_ (mixSong song) $ \(state,chunk) -> print state >> forM_ chunk (\x -> writeStream stream [x] 1)
 
 data PlayState = PS
                  { psTempo :: Int
@@ -58,12 +67,11 @@ instance Show ChannelState where
   show cs = printf "<%s %02d %02d %s>" (periodName (csPitch cs)) (ident (csInstrument cs))
             (round (csVolume cs*99) :: Int) (show (csEffect cs))
 
-startState song = PS { psTempo = 6
-                     , psBPM = 125
-                     , psChannels = replicate cnum chn
-                     }
-  where cnum = length.head.head.patterns $ song        
-        chn = CS { csWaveData = []
+startState numChn = PS { psTempo = 6
+                       , psBPM = 125
+                       , psChannels = replicate numChn chn
+                       }
+  where chn = CS { csWaveData = []
                  , csPitch = 0
                  , csFineTune = 1
                  , csSubSample = 0
@@ -93,8 +101,27 @@ startState song = PS { psTempo = 6
   LastTremolo     : Array[1..8] Of Byte;
   TremoloTable    : WavePtr;
   TremoloCounter  : Array[1..8] Of Byte;
-  NewOrder        : Byte;
 -}
+
+mixSong song = (map.fmap.map) (\s -> [chnFact*s]) . map mixChunk . expandSong $ song
+  where chnFact = 1 / fromIntegral (numChannels song)
+
+mixChunk state = (state,mixedChannels)
+  where mixedChannels = foldl' addChannel emptyChannel (psChannels state)
+        emptyChannel = replicate (tickLength (psBPM state)) 0
+        addChannel mix cs = if vol < 0.0001 then mix else mixChannel mix (csWaveData cs) (csSubSample cs)
+          where step = csSampleStep cs
+                vol = csVolume cs
+                mixChannel []     wd smp = []
+                mixChannel ms     [] smp = ms
+                mixChannel (m:ms) wd smp = wsmp `seq` wsmp : mixChannel ms wd' smp'
+                  where wsmp = m + head wd*vol
+                        (wd',smp') = adv wd (smp+step) -- because properFraction is too slow
+                        adv [] s = ([],s)
+                        adv ws s | s >= 1    = adv (tail ws) (s-1)
+                                 | otherwise = (ws,s)
+
+expandSong song = expandTicks (numChannels song) . flattenSong $ song
 
 flattenSong = concat . map handleLoops . map handleDelays . handleBreaks 0 . patterns
   where handleBreaks _   []         = []
@@ -115,129 +142,111 @@ flattenSong = concat . map handleLoops . map handleDelays . handleBreaks 0 . pat
                 noLoopStart line = null [() | [PatternLoop Nothing] <- map effect line]
                 getLoopEnd line = listToMaybe [cnt | [PatternLoop (Just cnt)] <- map effect line]
 
-mixSong song = tail $ scanl mkChunk (startState song,[]) (flattenSong song)
-  where mkChunk (ps,_) line = (ps'',chunk)
-          where ps' = foldl' processNote ps $ zip [0..] line
-                (chunk,ps'') = mixChunk ps'
-                processNote ps (i,Note ptc ins eff) = ps { psTempo = tempo'
-                                                         , psBPM = bpm'
-                                                         , psChannels = wrt i (psChannels ps) cs'' { csEffect = eff }
-                                                         }
-                  where tempo' = case eff of { [SetTempo x] -> x ; _ -> psTempo ps }
-                        bpm' = case eff of { [SetBPM x] -> x ; _ -> psBPM ps }
-                        cs = psChannels ps !! i
-                        ins' = fromMaybe (csInstrument cs) ins
-                        
-                        -- This part really needs to be cleaned up...
-                        cs' = if ptc == 0 then cs { csInstrument = ins'
-                                                  , csVolume = if isJust ins then volume ins' else csVolume cs
-                                                  , csWaveData = if isNothing ins || ins == Just (csInstrument cs)
-                                                                 then csWaveData cs else wave ins'
+expandTicks channelCount = unfoldr expandLine . (,,) 0 (startState channelCount)
+  where expandLine (0,_,[]) = Nothing
+        expandLine (0,PS tempo bpm channels,(line:lines)) = Just (state,(tick',state,lines))
+          where tempo' = last (tempo:[x | [SetTempo x] <- map effect line])
+                bpm' = last (bpm:[x | [SetBPM x] <- map effect line])
+                tick' = if tempo > 1 then 1 else 0
+                state = PS tempo' bpm' $ zipWith (processNote (tickLength bpm)) line channels
+        expandLine (tick,PS tempo bpm channels,lines) = Just (state,(tick',state,lines))
+          where tick' = if tick < tempo-1 then tick+1 else 0
+                state = PS tempo bpm $ map (processChannel (tickLength bpm) tick) channels
+
+tickLength bpm = round (baseFrequency*2.5) `div` bpm
+
+processNote tickLen (Note ptc ins eff) cs = (advanceSample cs'') { csEffect = eff }
+  where ins' = fromMaybe (csInstrument cs) ins
+
+        advanceSample cs = cs { csWaveData = drop wdstep (csWaveData cs)
+                              , csSubSample = smp'
+                              }
+          where (wdstep,smp') = properFraction (csSubSample cs+csSampleStep cs*fromIntegral tickLen)
+        
+        -- Handling the new note
+        cs' = if ptc == 0
+              then cs { csInstrument = ins'
+                      , csVolume = if isJust ins then volume ins' else csVolume cs
+                      , csWaveData = if isNothing ins || ins == Just (csInstrument cs)
+                                     then csWaveData cs else wave ins'
+                      }
+              else cs { csWaveData = case eff of
+                           (TonePortamento _:_) -> if ins == Just (csInstrument cs)
+                                                   then csWaveData cs else wave ins'
+                           [SampleOffset o] -> drop o (wave ins')
+                           _ -> wave ins'
+                      , csPitch = case eff of
+                           (TonePortamento _:_) -> csPitch cs
+                           _ -> ptc
+                      , csFineTune = fineTune ins'
+                      , csSubSample = 0
+                      , csSampleStep = sampleStep ptc (fineTune ins')
+                      , csVolume = volume ins'
+                      , csInstrument = ins'
+                      , csTonePortaEnd = case eff of
+                           (TonePortamento _:_) -> ptc
+                           _ -> csTonePortaEnd cs
+                      }
+
+        -- Setting up the new effect
+        cs'' = case eff of
+          (Vibrato spd amp:_) ->
+            cs' { csVibratoSpeed = fromMaybe (csVibratoSpeed cs') spd
+                , csVibratoAmp = maybe (csVibratoAmp cs') ((/8).fromIntegral) amp
+                }
+          [SetVolume v] -> cs' { csVolume = v }
+          [FinePortamento (Porta p)] -> (addPitch cs' p) { csFinePorta = abs p }
+          [FinePortamento LastUp] -> addPitch cs' (-csFinePorta cs')
+          [FinePortamento LastDown] -> addPitch cs' (csFinePorta cs')
+          [SetVibratoWaveform wf] -> cs' { csVibratoWave = (snd.fromJust) (find ((==wf).fst) waveData) }
+          [FineVolumeSlide x] -> let slide = fromMaybe (csFineVolumeSlide cs') x in 
+            cs' { csVolume = max 0 $ min 1 $ csVolume cs' + slide
+                , csFineVolumeSlide = slide
+                }
+          [FineTuneControl ft] -> addPitch cs' { csFineTune = ft } 0
+          _ -> addPitch cs' 0
+
+processChannel tickLen tick cs = cs''
+  where cs' = foldl' addEffect cs (csEffect cs)
+        cs'' = cs' { csWaveData = drop wdstep (csWaveData cs')
+                   , csSubSample = smp'
+                   } 
+        (wdstep,smp') = properFraction (csSubSample cs'+csSampleStep cs'*fromIntegral tickLen)
+
+        addEffect cs eff = case eff of
+          Arpeggio n1 n2 ->
+            cs { csSampleStep = sampleStep (csPitch cs) (csFineTune cs) * ([1,n1,n2] !! (tick `mod` 3)) }
+          Portamento (Porta p) -> (addPitch cs p) { csPortaDown = if p > 0 then p else csPortaDown cs
+                                                  , csPortaUp = if p < 0 then p else csPortaUp cs
                                                   }
-                               else cs { csWaveData = case eff of
-                                         (TonePortamento _:_) -> if ins == Just (csInstrument cs)
-                                                                 then csWaveData cs else wave ins'
-                                         [SampleOffset o] -> drop o (wave ins')
-                                         _ -> wave ins'
-                                       , csPitch = case eff of
-                                         (TonePortamento _:_) -> csPitch cs
-                                         _ -> ptc
-                                       , csFineTune = fineTune ins'
-                                       , csSubSample = 0
-                                       , csSampleStep = sampleStep ptc (fineTune ins')
-                                       , csVolume = volume ins'
-                                       , csInstrument = ins'
-                                       , csTonePortaEnd = case eff of
-                                         (TonePortamento _:_) -> ptc
-                                         _ -> csTonePortaEnd cs
-                                       }
-                        cs'' = case eff of
-                          (Vibrato spd amp:_) ->
-                            cs' { csVibratoSpeed = fromMaybe (csVibratoSpeed cs') spd
-                                , csVibratoAmp = maybe (csVibratoAmp cs') ((/8).fromIntegral) amp
-                                }
-                          [SetVolume v] -> cs' { csVolume = v }
-                          [FinePortamento (Porta p)] -> (addPitch cs p) { csFinePorta = abs p }
-                          [FinePortamento LastUp] -> addPitch cs (-csFinePorta cs')
-                          [FinePortamento LastDown] -> addPitch cs (csFinePorta cs')
-                          [SetVibratoWaveform wf] -> cs { csVibratoWave = (snd.fromJust) (find ((==wf).fst) waveData) }
-                          [FineVolumeSlide x] -> let slide = fromMaybe (csFineVolumeSlide cs) x in 
-                            cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
-                               , csFineVolumeSlide = slide
-                               }
-                          [FineTuneControl ft] -> addPitch cs { csFineTune = ft } 0
-                          _ -> cs'
-                                              
-        wrt i xs e = let (pre,_:post) = splitAt i xs in pre ++ e:post
+          Portamento LastUp -> addPitch cs (csPortaUp cs)
+          Portamento LastDown -> addPitch cs (csPortaDown cs)
+          TonePortamento (Just p) -> targetPitch cs { csTonePortaSpeed = p }
+          TonePortamento Nothing -> targetPitch cs
+          Vibrato _ _ -> let pitch = fromIntegral (csPitch cs) +
+                                     fromIntegral (head (csVibratoWave cs)) * csVibratoAmp cs in
+                         cs { csSampleStep = sampleStep' pitch (csFineTune cs)
+                            , csVibratoWave = drop (csVibratoSpeed cs) (csVibratoWave cs)
+                            }
+          VolumeSlide x -> let slide = fromMaybe (csVolumeSlide cs) x in 
+            cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
+               , csVolumeSlide = slide
+               }
+          RetrigNote r -> if tick `mod` r == 0 then cs { csWaveData = wave (csInstrument cs) } else cs
+          NoteCut c -> if tick == c then cs { csWaveData = [] } else cs
+          _ -> cs
+                
+addPitch cs p = cs { csPitch = pitch
+                   , csSampleStep = sampleStep pitch (csFineTune cs)
+                   }
+  where pitch = clampPitch (csPitch cs + p)
 
-mixChunk ps = (concatMap snd chunks, fst (last chunks))
-  where chunks = processTicks (psTempo ps) ps True
-        tickLength = round (baseFrequency*2.5) `div` psBPM ps
-        chnFact = 1 / fromIntegral (length (psChannels ps))
-        processTicks 0    _  _       = []
-        processTicks tick ps isFirst = (ps',mixResult) : processTicks (tick-1) ps' False
-          where mixResult = map (\s -> [chnFact*s]) mixedChannels
-                mixedChannels = foldl' addChannel (replicate tickLength 0) (psChannels ps)
-                curTick = psTempo ps-tick
-                
-                addChannel mix cs = if vol < 0.0001 then mix
-                                    else mixChannel mix (csWaveData cs) (csSubSample cs)
-                  where step = csSampleStep cs
-                        vol = csVolume cs
-                        mixChannel []     wd smp = []
-                        mixChannel ms     [] smp = ms
-                        mixChannel (m:ms) wd smp = wsmp `seq` wsmp : mixChannel ms wd' smp'
-                          where wsmp = m + head wd*vol
-                                (wd',smp') = adv wd (smp+step) -- because properFraction is too slow
-                                adv [] s = ([],s)
-                                adv ws s | s >= 1    = adv (tail ws) (s-1)
-                                         | otherwise = (ws,s)
-                
-                ps' = ps { psChannels = cs'' }
-                cs' = map advChannel (psChannels ps)
-                advChannel cs = cs { csWaveData = drop wdstep (csWaveData cs)
-                                   , csSubSample = smp'
-                                   }
-                  where (wdstep,smp') = properFraction (csSubSample cs+csSampleStep cs*fromIntegral tickLength)
-                cs'' = if isFirst then cs' else flip map cs' $ \cs -> foldl' addEffect cs (csEffect cs)                
-                addEffect cs eff = case eff of
-                  Arpeggio n1 n2 ->
-                    cs { csSampleStep = sampleStep (csPitch cs) (csFineTune cs) * ([1,n1,n2] !! (curTick `mod` 3))
-                       }
-                  Portamento (Porta p) -> let pitch = clampPitch (csPitch cs + p) in
-                    cs { csPitch = pitch
-                       , csSampleStep = sampleStep pitch (csFineTune cs)
-                       , csPortaDown = if p > 0 then p else csPortaDown cs
-                       , csPortaUp = if p < 0 then p else csPortaUp cs }
-                  Portamento LastUp -> addPitch cs (csPortaUp cs)
-                  Portamento LastDown -> addPitch cs (csPortaDown cs)
-                  TonePortamento (Just p) -> targetPitch cs { csTonePortaSpeed = p }
-                  TonePortamento Nothing -> targetPitch cs
-                  Vibrato _ _ -> let pitch = fromIntegral (csPitch cs) +
-                                             fromIntegral (head (csVibratoWave cs)) * csVibratoAmp cs in
-                    cs { csSampleStep = sampleStep' pitch (csFineTune cs)
-                       , csVibratoWave = drop (csVibratoSpeed cs) (csVibratoWave cs)
-                       }
-                  VolumeSlide x -> let slide = fromMaybe (csVolumeSlide cs) x in 
-                    cs { csVolume = max 0 $ min 1 $ csVolume cs + slide
-                       , csVolumeSlide = slide
-                       }
-                  RetrigNote r -> if curTick `mod` r == 0 then cs { csWaveData = wave (csInstrument cs) } else cs
-                  NoteCut c -> if curTick == c then cs { csWaveData = [] } else cs
-                  _ -> cs
-                
-addPitch cs p = let pitch = clampPitch (csPitch cs + p) in
-  cs { csPitch = pitch
-     , csSampleStep = sampleStep pitch (csFineTune cs)
-     }
-
-targetPitch cs = let pitch = if csPitch cs > csTonePortaEnd cs
-                             then max (csTonePortaEnd cs) (csPitch cs-csTonePortaSpeed cs) 
-                             else min (csTonePortaEnd cs) (csPitch cs+csTonePortaSpeed cs) 
-                 in
-  cs { csPitch = pitch
-     , csSampleStep = sampleStep pitch (csFineTune cs)
-     }
+targetPitch cs = cs { csPitch = pitch
+                    , csSampleStep = sampleStep pitch (csFineTune cs)
+                    } 
+  where pitch = if csPitch cs > csTonePortaEnd cs
+                then max (csTonePortaEnd cs) (csPitch cs-csTonePortaSpeed cs) 
+                else min (csTonePortaEnd cs) (csPitch cs+csTonePortaSpeed cs) 
 
 sampleStep p ft = basePeriod / (fromIntegral p * baseFrequency) * ft
 

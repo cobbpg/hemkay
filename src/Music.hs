@@ -9,6 +9,8 @@ data Song = Song
             , patterns :: [Pattern]
             }
 
+numChannels = length . head . head . patterns
+
 instance Show Song where
   show (Song t smps pats) = unlines [line |
                                      block <- [["Title: " ++ t,""],
@@ -61,7 +63,7 @@ instance Show Note where
 periodName p = head $ [str ++ show oct |
                        (oct,pers) <- zip [0..] periodTable,
                        (per,str) <- zip pers noteNames,
-                       per == p] ++ ["---"]
+                       per == p] ++ [printf "%3d" (p `mod` 1000)]
 
 data Waveform = SineWave | SawtoothWave | SquareWave deriving Eq
 
