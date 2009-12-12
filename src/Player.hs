@@ -88,9 +88,6 @@ startState song = PS { psTempo = 6
   State vars still missing:
 
   DelayChannel    : Byte;
-  PatternLoopCnt  : Byte;
-  PatternLoopRow  : Byte;
-  PatternLoop     : Boolean;
   Panning         : Array[1..8] Of ShortInt;
   Surround        : Array[1..8] Of Boolean;
   LastTremolo     : Array[1..8] Of Byte;
@@ -99,22 +96,27 @@ startState song = PS { psTempo = 6
   NewOrder        : Byte;
 -}
 
-mixSong song = tail $ scanl mkChunk (startState song,[]) (flattenRows (patterns song))
-  where flattenRows = concat . handleDelays . handleBreaks 0
-        handleBreaks _ [] = []
+flattenSong = concat . map handleLoops . map handleDelays . handleBreaks 0 . patterns
+  where handleBreaks _   []         = []
         handleBreaks row (pat:pats) = (pat' ++ take 1 rest) : handleBreaks row' pats
-          where (pat',rest) = span (all (isNothing . getBreak)) (drop row pat)
-                row' = head ([b | Just b <- map getBreak (last pat')] ++ [0])
-                getBreak note = case effect note of
-                  [PatternBreak b] -> Just b
-                  _ -> Nothing
-        handleDelays pat = map (concatMap (\r -> replicate (delayCount r) r)) pat
-          where delayCount r = head ([d+1 | Just d <- map getDelay r] ++ [1])
-                getDelay note = case effect note of
-                  [PatternDelay d] -> Just d
-                  _ -> Nothing
-                
-        mkChunk (ps,_) line = (ps'',chunk)
+          where (pat',rest) = span (null . getBreaks) (drop row pat)
+                row' = maybe 0 (last . getBreaks) (listToMaybe (take 1 rest))
+                getBreaks line = [b | [PatternBreak b] <- map effect line]
+
+        handleDelays = concatMap (\l -> replicate (delayCount l) l)
+          where delayCount line = last (1:[d | [PatternDelay d] <- map effect line])
+        
+        handleLoops pat = pat' ++ if null rest' then loop else rest''
+          where (pat',rest) = span noLoopStart pat
+                (loop,rest') = span (isNothing . getLoopEnd) rest
+                loopLast:loopRest = rest'
+                rest'' = case getLoopEnd loopLast of
+                  Just cnt -> concat (replicate (cnt+1) (loop ++ [loopLast])) ++ handleLoops loopRest
+                noLoopStart line = null [() | [PatternLoop Nothing] <- map effect line]
+                getLoopEnd line = listToMaybe [cnt | [PatternLoop (Just cnt)] <- map effect line]
+
+mixSong song = tail $ scanl mkChunk (startState song,[]) (flattenSong song)
+  where mkChunk (ps,_) line = (ps'',chunk)
           where ps' = foldl' processNote ps $ zip [0..] line
                 (chunk,ps'') = mixChunk ps'
                 processNote ps (i,Note ptc ins eff) = ps { psTempo = tempo'

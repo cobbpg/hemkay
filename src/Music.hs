@@ -80,7 +80,7 @@ data Effect = Arpeggio Float Float            -- test!
             | FinePanning Int                 --
             | SampleOffset Int                -- ok
             | VolumeSlide (Maybe Float)       -- ok
-            | OrderJump Int                   --
+            | OrderJump Int                   -- no plans to support
             | SetVolume Float                 -- ok
             | PatternBreak Int                -- ok
 --            | SetFilter Int                 --
@@ -88,14 +88,14 @@ data Effect = Arpeggio Float Float            -- test!
 --            | GlissandoControl Int          --
             | SetVibratoWaveform Waveform     -- test!
             | FineTuneControl Float           -- ok
-            | PatternLoop (Maybe Int)         --
+            | PatternLoop (Maybe Int)         -- ok
             | SetTremoloWaveform Waveform     --
             | GravisPanning Int               --
             | RetrigNote Int                  -- ok
             | FineVolumeSlide (Maybe Float)   -- ok
             | NoteCut Int                     -- test!
             | NoteDelay Int                   --
-            | PatternDelay Int                -- test!
+            | PatternDelay Int                -- ok
 --            | FunkRepeat                    --
             | SetTempo Int                    -- ok
             | SetBPM Int                      -- ok
@@ -142,7 +142,6 @@ instance Show Effect where
   showList [Vibrato _ _, VolumeSlide Nothing] = showString "vvs ---"
   showList [Vibrato _ _, VolumeSlide (Just s)] = showString (printf "vvs %3d" (round (s*99) :: Int))
   showList _ = showString "???????"
-
 
 periodTable = [[1712, 1616, 1525, 1440, 1375, 1281, 1209, 1141, 1077, 1017,  961,  907],
                [ 856,  808,  762,  720,  678,  640,  604,  570,  538,  508,  480,  453],
