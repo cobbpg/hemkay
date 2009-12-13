@@ -113,7 +113,7 @@ instance Show Effect where
   show (Vibrato amp spd) = printf "vib %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
   show (Tremolo amp spd) = printf "trm %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
   show (FinePanning p) = printf "<=> %3d" p
-  show (SampleOffset o) = printf "ofs $%2x" (o `div` 256)
+  show (SampleOffset o) = printf "ofs $%02x" (o `div` 512)
   show (VolumeSlide Nothing) = "vsl ..."
   show (VolumeSlide (Just s)) = printf "vsl %3d" (round (s*99) :: Int)
   show (OrderJump o) = printf "ord %3d" o
@@ -153,20 +153,8 @@ periodTable = [[1712, 1616, 1525, 1440, 1375, 1281, 1209, 1141, 1077, 1017,  961
 
 noteNames = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
 
-waveData :: [(Waveform, [Int])]
-waveData = [(SineWave, cycle
-             [ -1,  1,  3,  4,  5,  7,  8,  9, 10, 11, 12, 13, 14, 14, 15, 15
-             , 15, 15, 15, 14, 14, 13, 12, 11, 10,  9,  8,  7,  5,  4,  3,  1
-             , -1, -2, -4, -5, -6, -8, -9,-10,-11,-12,-13,-14,-15,-15,-16,-16
-             ,-16,-16,-16,-15,-15,-14,-13,-12,-11,-10, -9, -8, -6, -5, -4, -2])
-           ,(SawtoothWave, cycle           
-             [ 15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10,  9,  9,  8,  8
-             ,  7,  7,  6,  6,  5,  5,  4,  4,  3,  3,  2,  2,  1,  1,  0,  0
-             , -1, -1, -2, -2, -3, -3, -4, -4, -5, -5, -6, -6, -7, -7, -8, -8
-             , -9, -9,-10,-10,-11,-11,-12,-12,-13,-13,-14,-14,-15,-15,-16,-16])
-           ,(SquareWave, cycle
-             [ 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
-             , 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
-             ,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16
-             ,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16,-16])
+waveData :: [(Waveform, [Float])]
+waveData = [(SineWave, cycle [sin (v*pi/32) | v <- [0..64]])
+           ,(SawtoothWave, cycle [(v+0.5)/31.5 | v <- [-32..31]])
+           ,(SquareWave, cycle (replicate 32 (-1) ++ replicate 32 1))
            ]
