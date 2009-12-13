@@ -74,31 +74,31 @@ instance Show Waveform where
 
 data PortaParam = LastUp | LastDown | Porta Int deriving Show
 
-data Effect = Arpeggio Float Float            -- test!
+data Effect = Arpeggio Float Float            -- ok
             | Portamento PortaParam           -- ok
-            | TonePortamento (Maybe Int)      -- test!
-            | Vibrato (Maybe Int) (Maybe Int) -- test!
-            | Tremolo (Maybe Int) (Maybe Int) --
-            | FinePanning Int                 --
+            | TonePortamento (Maybe Int)      -- ok
+            | Vibrato (Maybe Int) (Maybe Int) -- ok?
+            | Tremolo (Maybe Int) (Maybe Int) -- ok?
+            | FinePanning Int                 -- todo
             | SampleOffset Int                -- ok
             | VolumeSlide (Maybe Float)       -- ok
             | OrderJump Int                   -- no plans to support
             | SetVolume Float                 -- ok
             | PatternBreak Int                -- ok
---            | SetFilter Int                 --
-            | FinePortamento PortaParam       -- test!
---            | GlissandoControl Int          --
-            | SetVibratoWaveform Waveform     -- test!
+--            | SetFilter Int                 -- no plans to support
+            | FinePortamento PortaParam       -- ok
+--            | GlissandoControl Int          -- no plans to support
+            | SetVibratoWaveform Waveform     -- ok
             | FineTuneControl Float           -- ok
             | PatternLoop (Maybe Int)         -- ok
-            | SetTremoloWaveform Waveform     --
-            | GravisPanning Int               --
+            | SetTremoloWaveform Waveform     -- ok
+            | GravisPanning Int               -- todo
             | RetrigNote Int                  -- ok
             | FineVolumeSlide (Maybe Float)   -- ok
-            | NoteCut Int                     -- test!
-            | NoteDelay Int                   --
+            | NoteCut Int                     -- ok
+            | NoteDelay Int                   -- ok
             | PatternDelay Int                -- ok
---            | FunkRepeat                    --
+--            | FunkRepeat                    -- no plans to support
             | SetTempo Int                    -- ok
             | SetBPM Int                      -- ok
               
@@ -113,7 +113,7 @@ instance Show Effect where
   show (Vibrato amp spd) = printf "vib %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
   show (Tremolo amp spd) = printf "trm %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
   show (FinePanning p) = printf "<=> %3d" p
-  show (SampleOffset o) = printf "ofs $%02x" (o `div` 512)
+  show (SampleOffset o) = printf "ofs $%02x" (o `div` 256)
   show (VolumeSlide Nothing) = "vsl ..."
   show (VolumeSlide (Just s)) = printf "vsl %3d" (round (s*99) :: Int)
   show (OrderJump o) = printf "ord %3d" o

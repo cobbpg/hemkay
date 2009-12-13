@@ -23,7 +23,7 @@ readModule = runGet $ do
   sampleInfo <- replicateM 31 getSampleInfo
   songLength <- getByte
   skip 1
-  orderList <- take songLength <$> replicateM 128 getByte
+  orderList <- replicateM 128 getByte
   numChannels <- flip lookup formatList <$> getString 4
   when (isNothing numChannels) (fail "Unknown format")
   patternData <- getPatterns (maximum orderList + 1) (fromJust numChannels)
@@ -35,7 +35,7 @@ readModule = runGet $ do
   return $ Song
     { title = name
     , instruments = insList
-    , patterns = map (patternData' !!) orderList
+    , patterns = map (patternData' !!) (take songLength orderList)
     }
 
 getString = fmap (takeWhile (/='\0') . S.unpack) . getByteString
@@ -69,11 +69,11 @@ mkEffect 0x5 _   x = [TonePortamento Nothing, VolumeSlide (mkVolSlide x)]
 mkEffect 0x6 _   x = [Vibrato Nothing Nothing, VolumeSlide (mkVolSlide x)]
 mkEffect 0x7 _   x = [uncurry Tremolo (mkWaveData x)]
 mkEffect 0x8 _   x = [FinePanning x]
-mkEffect 0x9 _   x = [SampleOffset (x*512)]
+mkEffect 0x9 _   x = [SampleOffset (x*256)]
 mkEffect 0xa _   x = [VolumeSlide (mkVolSlide x)]
 mkEffect 0xb _   x = [OrderJump x]
 mkEffect 0xc _   x = [SetVolume (fromIntegral x/64)]
-mkEffect 0xd _   x = [PatternBreak x]
+mkEffect 0xd _   x = [PatternBreak (x `div` 16 * 10 + x `mod` 16)]
 mkEffect 0xe 0x1 0 = [FinePortamento LastUp]
 mkEffect 0xe 0x1 x = [FinePortamento (Porta (-x))]
 mkEffect 0xe 0x2 0 = [FinePortamento LastDown]
