@@ -9,6 +9,7 @@ data Song = Song
             , patterns :: [Pattern]
             }
 
+numChannels :: Song -> Int
 numChannels = length . head . head . patterns
 
 instance Show Song where
@@ -18,7 +19,6 @@ instance Show Song where
                                                "":map showPattern pats
                                               ],
                                      line <- block]
-                             
 
 data Instrument = Instrument
                   { ident :: Int
@@ -39,6 +39,7 @@ instance Show Instrument where
                                      ", volume: " ++ show vol ++
                                      ", finetune: " ++ show ft
 
+emptyInstrument :: Instrument
 emptyInstrument = Instrument
                   { ident = 0
                   , name = ""
@@ -49,6 +50,7 @@ emptyInstrument = Instrument
 
 type Pattern = [[Note]]
 
+showPattern :: Pattern -> String
 showPattern pat = unlines ["| " ++ concatMap show line | line <- pat]
 
 data Note = Note 
@@ -60,8 +62,9 @@ data Note = Note
 instance Show Note where
   show (Note p i e) = printf "%s %02d %s | " (periodName p) (maybe 0 ident i) (show e)
 
+periodName :: Int -> [Char]
 periodName p = head $ [str ++ show oct |
-                       (oct,pers) <- zip [0..] periodTable,
+                       (oct,pers) <- zip [0 :: Int ..] periodTable,
                        (per,str) <- zip pers noteNames,
                        per == p] ++ [printf "%3d" (p `mod` 1000)]
 
@@ -79,7 +82,7 @@ data Effect = Arpeggio Float Float            -- ok
             | TonePortamento (Maybe Int)      -- ok
             | Vibrato (Maybe Int) (Maybe Int) -- ok?
             | Tremolo (Maybe Int) (Maybe Int) -- ok?
-            | FinePanning Int                 -- todo
+            | FinePanning Float               -- ok
             | SampleOffset Int                -- ok
             | VolumeSlide (Maybe Float)       -- ok
             | OrderJump Int                   -- no plans to support
@@ -92,7 +95,6 @@ data Effect = Arpeggio Float Float            -- ok
             | FineTuneControl Float           -- ok
             | PatternLoop (Maybe Int)         -- ok
             | SetTremoloWaveform Waveform     -- ok
-            | GravisPanning Int               -- todo
             | RetrigNote Int                  -- ok
             | FineVolumeSlide (Maybe Float)   -- ok
             | NoteCut Int                     -- ok
@@ -104,7 +106,6 @@ data Effect = Arpeggio Float Float            -- ok
               
 instance Show Effect where
   show (Arpeggio a1 a2) = printf "arp %x %x" (unhalf a1) (unhalf a2)
-    where unhalf x = round (log x / log 2 * 12) :: Int
   show (Portamento LastUp) = "por ^^^"
   show (Portamento LastDown) = "por vvv"
   show (Portamento (Porta p)) = printf "por %3d" p
@@ -112,7 +113,7 @@ instance Show Effect where
   show (TonePortamento (Just p)) = printf "ton %3d" p
   show (Vibrato amp spd) = printf "vib %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
   show (Tremolo amp spd) = printf "trm %x %x" (fromMaybe 0 amp) (fromMaybe 0 spd)
-  show (FinePanning p) = printf "<=> %3d" p
+  show (FinePanning p) = printf "<=> %3d" (round (p*99) :: Int)
   show (SampleOffset o) = printf "ofs $%02x" (o `div` 256)
   show (VolumeSlide Nothing) = "vsl ..."
   show (VolumeSlide (Just s)) = printf "vsl %3d" (round (s*99) :: Int)
@@ -123,11 +124,10 @@ instance Show Effect where
   show (FinePortamento LastDown) = "por!vvv"
   show (FinePortamento (Porta p)) = printf "por!%3d" p
   show (SetVibratoWaveform w) = "vib " ++ show w
-  show (FineTuneControl ft) = "fin    "
+  show (FineTuneControl ft) = printf "fin %x  " (unhalf ft)
   show (PatternLoop Nothing) = "lop beg"
   show (PatternLoop (Just c)) = printf "lop %3d" c
   show (SetTremoloWaveform w) = "trm " ++ show w
-  show (GravisPanning p) = printf "<=> %3d" (p*8)
   show (RetrigNote r) = printf "ret %3d" r
   show (FineVolumeSlide Nothing) = "vsl!..."
   show (FineVolumeSlide (Just s)) = printf "vsl!%3d" (round (s*99) :: Int)
@@ -145,12 +145,17 @@ instance Show Effect where
   showList [Vibrato _ _, VolumeSlide (Just s)] = showString (printf "vvs %3d" (round (s*99) :: Int))
   showList _ = showString "???????"
 
+unhalf :: Float -> Int
+unhalf x = round (log x / log 2 * 12)
+
+periodTable :: [[Int]]
 periodTable = [[1712, 1616, 1525, 1440, 1375, 1281, 1209, 1141, 1077, 1017,  961,  907],
                [ 856,  808,  762,  720,  678,  640,  604,  570,  538,  508,  480,  453],
                [ 428,  404,  381,  360,  339,  320,  302,  285,  269,  254,  240,  226],
                [ 214,  202,  190,  180,  170,  160,  151,  143,  135,  127,  120,  113],
                [ 107,  101,   95,   90,   85,   80,   76,   71,   67,   64,   60,   57]]
 
+noteNames :: [String]
 noteNames = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
 
 waveData :: [(Waveform, [Float])]

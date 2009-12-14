@@ -1,11 +1,10 @@
--- deps: portaudio, bytestring, binary
-
 import Sound.PortAudio
 import System.Environment
 
 import Loader
 import Player
 
+main :: IO (Either String ErrorCode)
 main = do
   initialize
   args <- getArgs
