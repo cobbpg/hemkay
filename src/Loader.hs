@@ -21,7 +21,7 @@ type TempNote = (Int, Int, [Effect])
 formatList :: [(String, Int)]
 formatList = [("M.K.",4),("M!K!",4),("FLT4",4),("FLT8",8),("4CHN",4),("6CHN",6),("8CHN",8),
               ("16CH",16),("32CH",32)]
-               
+
 loadModule :: FilePath -> IO Song
 loadModule path = readModule <$> LS.readFile path
 

@@ -53,16 +53,17 @@ type Pattern = [[Note]]
 showPattern :: Pattern -> String
 showPattern pat = unlines ["| " ++ concatMap show line | line <- pat]
 
-data Note = Note 
+data Note = Note
             { period :: Int
             , instrument :: Maybe Instrument
             , effect :: [Effect]
             }
 
 instance Show Note where
-  show (Note p i e) = printf "%s %02d %s | " (periodName p) (maybe 0 ident i) (show e)
+  show (Note p i e) = printf "%s %s %s | " (periodName p) (maybe ".." (printf "%02d" . ident) i) (show e)
 
 periodName :: Int -> [Char]
+periodName 0 = "..."
 periodName p = head $ [str ++ show oct |
                        (oct,pers) <- zip [0 :: Int ..] periodTable,
                        (per,str) <- zip pers noteNames,
@@ -103,7 +104,7 @@ data Effect = Arpeggio Float Float            -- ok
 --            | FunkRepeat                    -- no plans to support
             | SetTempo Int                    -- ok
             | SetBPM Int                      -- ok
-              
+
 instance Show Effect where
   show (Arpeggio a1 a2) = printf "arp %x %x" (unhalf a1) (unhalf a2)
   show (Portamento LastUp) = "por ^^^"
@@ -136,7 +137,7 @@ instance Show Effect where
   show (PatternDelay d) = printf "pdl %3d" d
   show (SetTempo t) = printf "tmp %3d" t
   show (SetBPM b) = printf "bpm %3d" b
-  
+
   showList [] = showString "       "
   showList [eff] = shows eff
   showList [TonePortamento _, VolumeSlide Nothing] = showString "tvs ---"

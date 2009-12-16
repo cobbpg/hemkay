@@ -41,11 +41,12 @@ playModule song = withDefaultStream 0 2 paFloat32 (realToFrac sampleFrequency) b
 data PlayState = PS
                  { psTempo :: Int
                  , psBPM :: Int
+                 , psRow :: [Note]
                  , psChannels :: [ChannelState]
                  }
 
 instance Show PlayState where
-  show (PS t b cs) = printf "%2d/%3d %s" t b (show cs)
+  show (PS t b r _) = printf " | %s%2d/%3d" (concatMap show r) t b
 
 data ChannelState = CS
                     { csWaveData :: WaveData
@@ -82,6 +83,7 @@ instance Show ChannelState where
 startState :: Int -> PlayState
 startState numChn = PS { psTempo = 6
                        , psBPM = 125
+                       , psRow = []
                        , psChannels = map chn [0..numChn]
                        }
   where chn n = CS { csWaveData = []
@@ -136,7 +138,7 @@ mixChunk state = (state,mixedChannels)
                                  | otherwise = (ws,s)
 
 expandSong :: Song -> [PlayState]
-expandSong song = expandTicks (numChannels song) . flattenSong $ song
+expandSong = expandTicks . flattenSong
 
 flattenSong :: Song -> [[Note]]
 flattenSong = concat . map handleLoops . map handleDelays . handleBreaks 0 . patterns
@@ -148,7 +150,7 @@ flattenSong = concat . map handleLoops . map handleDelays . handleBreaks 0 . pat
 
         handleDelays = concatMap (\l -> replicate (delayCount l) l)
           where delayCount row = last (1:[d | [PatternDelay d] <- map effect row])
-        
+
         handleLoops pat = pat' ++ if null rest' then loop else rest''
           where (pat',rest) = span noLoopStart pat
                 (loop,rest') = span (isNothing . getLoopEnd) rest
@@ -159,18 +161,18 @@ flattenSong = concat . map handleLoops . map handleDelays . handleBreaks 0 . pat
                 noLoopStart row = null [() | [PatternLoop Nothing] <- map effect row]
                 getLoopEnd row = listToMaybe [cnt | [PatternLoop (Just cnt)] <- map effect row]
 
-expandTicks :: Int -> [[Note]] -> [PlayState]
-expandTicks channelCount = unfoldr expandRow . (,,) 0 (startState channelCount)
+expandTicks :: [[Note]] -> [PlayState]
+expandTicks flatSong = unfoldr expandRow (0, startState . length . head $ flatSong, flatSong)
   where expandRow (0,_,[]) = Nothing
-        expandRow (0,PS tempo bpm channels,(row:rows)) = Just (state,(tick',state',rows))
+        expandRow (0,PS tempo bpm _ channels,(row:rows)) = Just (state,(tick',state',rows))
           where tempo' = last (tempo:[x | [SetTempo x] <- map effect row])
                 bpm' = last (bpm:[x | [SetBPM x] <- map effect row])
                 tick' = if tempo > 1 then 1 else 0
-                state = PS tempo' bpm' $ zipWith processNote row channels
+                state = PS tempo' bpm' row $ zipWith processNote row channels
                 state' = advanceSamples state
-        expandRow (tick,PS tempo bpm channels,rows) = Just (state,(tick',state',rows))
+        expandRow (tick,PS tempo bpm row channels,rows) = Just (state,(tick',state',rows))
           where tick' = if tick < tempo-1 then tick+1 else 0
-                state = PS tempo bpm $ map (processChannel tick) channels
+                state = PS tempo bpm row $ map (processChannel tick) channels
                 state' = advanceSamples state
 
         advanceSamples state = state { psChannels = map advanceSample (psChannels state) }
@@ -195,7 +197,7 @@ processNote (Note per ins eff) cs = cs'''
                       , csFineTune = fineTune ins'
                       , csWaveData = if insStays then csWaveData cs else wave ins'
                       }
-              else cs { csInstrument = ins' 
+              else cs { csInstrument = ins'
                       , csVolume = volume ins'
                       , csFineTune = fineTune ins'
                       , csWaveData = case eff of
@@ -226,7 +228,7 @@ processNote (Note per ins eff) cs = cs'''
           [FinePortamento LastDown] -> addPeriod cs' (csFinePorta cs')
           [SetVibratoWaveform wf] -> cs' { csVibratoWave = (snd.fromJust) (find ((==wf).fst) waveData) }
           [SetTremoloWaveform wf] -> cs' { csTremoloWave = (snd.fromJust) (find ((==wf).fst) waveData) }
-          [FineVolumeSlide x] -> let slide = fromMaybe (csFineVolumeSlide cs') x in 
+          [FineVolumeSlide x] -> let slide = fromMaybe (csFineVolumeSlide cs') x in
             cs' { csVolume = max 0 $ min 1 $ csVolume cs' + slide
                 , csFineVolumeSlide = slide
                 }
@@ -240,8 +242,8 @@ processNote (Note per ins eff) cs = cs'''
                 , csDelayedInstrument = ins'
                 }
           _ -> cs'
-        
-        -- Finalising state and handling vibrato effects  
+
+        -- Finalising state and handling vibrato effects
         cs''' = handleVibs (addPeriod cs'' 0) { csEffect = eff, csTremoloDiff = 0 }
         handleVibs cs = case eff of
           (Vibrato _ _:_) -> let period = clampPeriod (csPeriod cs + round (head (csVibratoWave cs) * csVibratoAmp cs)) in
@@ -260,8 +262,8 @@ processChannel tick cs = foldl' addEffect cs (csEffect cs)
           Arpeggio n1 n2 ->
             cs { csSampleStep = sampleStep (csPeriod cs) (csFineTune cs) * ([1,n1,n2] !! (tick `mod` 3)) }
           Portamento (Porta p) -> (addPeriod cs p) { csPortaDown = if p > 0 then p else csPortaDown cs
-                                                  , csPortaUp = if p < 0 then p else csPortaUp cs
-                                                  }
+                                                   , csPortaUp = if p < 0 then p else csPortaUp cs
+                                                   }
           Portamento LastUp -> addPeriod cs (csPortaUp cs)
           Portamento LastDown -> addPeriod cs (csPortaDown cs)
           TonePortamento (Just p) -> targetPeriod cs { csTonePortaSpeed = p }
@@ -273,7 +275,7 @@ processChannel tick cs = foldl' addEffect cs (csEffect cs)
           Tremolo _ _ -> cs { csTremoloDiff = head (csTremoloWave cs) * csTremoloAmp cs
                             , csTremoloWave = drop (csTremoloSpeed cs) (csTremoloWave cs)
                             }
-          VolumeSlide x -> let slide = fromMaybe (csVolumeSlide cs) x in 
+          VolumeSlide x -> let slide = fromMaybe (csVolumeSlide cs) x in
             cs { csVolume = clampVolume (csVolume cs + slide)
                , csVolumeSlide = slide
                }
@@ -288,7 +290,7 @@ processChannel tick cs = foldl' addEffect cs (csEffect cs)
                                              , csPeriod = csDelayedPeriod cs
                                              }
           _ -> cs
-                
+
 addPeriod :: ChannelState -> Int -> ChannelState
 addPeriod cs p = cs { csPeriod = period
                     , csSampleStep = sampleStep period (csFineTune cs)
@@ -298,10 +300,10 @@ addPeriod cs p = cs { csPeriod = period
 targetPeriod :: ChannelState -> ChannelState
 targetPeriod cs = cs { csPeriod = period
                      , csSampleStep = sampleStep period (csFineTune cs)
-                     } 
+                     }
   where period = if csPeriod cs > csTonePortaEnd cs
-                then max (csTonePortaEnd cs) (csPeriod cs-csTonePortaSpeed cs) 
-                else min (csTonePortaEnd cs) (csPeriod cs+csTonePortaSpeed cs) 
+                then max (csTonePortaEnd cs) (csPeriod cs-csTonePortaSpeed cs)
+                else min (csTonePortaEnd cs) (csPeriod cs+csTonePortaSpeed cs)
 
 sampleStep :: Int -> Float -> Float
 sampleStep p ft = baseFrequency / (fromIntegral p * sampleFrequency) * ft
