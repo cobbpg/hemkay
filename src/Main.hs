@@ -1,10 +1,10 @@
-import Sound.PortAudio
+import Sound.PortAudio.MB
 import System.Environment
 
 import Loader
 import Player
 
-main :: IO (Either String ErrorCode)
+main :: IO ()
 main = do
   initialize
   args <- getArgs
