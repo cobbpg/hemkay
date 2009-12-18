@@ -1,7 +1,8 @@
-{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
+{-# OPTIONS_GHC -fno-warn-name-shadowing -funbox-strict-fields #-}
 
 module Player where
 
+import Control.Arrow
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Fix
@@ -11,6 +12,7 @@ import Data.List
 --                       concatMap,zipWith,(!!),tail,scanl,zip,splitAt,length)
 --import Data.List.Stream
 import Data.Maybe
+import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable
 import Sound.PortAudio.MB
@@ -20,14 +22,16 @@ import Music
 
 type MixState = (Int, [(WaveData, Float, Float, Float, Float)])
 
+data Sample = Smp !Float !Float
+
 baseFrequency :: Float
 baseFrequency = 3546894.6
 
 sampleFrequency :: Float
 sampleFrequency = 44100
 
-bufferLength :: Int
-bufferLength = 0x1000
+--bufferLength :: Int
+--bufferLength = 0x1000
 
 playModule :: Song -> IO ()
 playModule song = do
@@ -51,7 +55,7 @@ playModule song = do
 --  --forM_ (mixSong song) $ \(state,chunk) -> print state >> forM_ chunk (\x -> writeStream stream [x] 1)
 
 feedSong :: Float -> IORef [MixState] -> MVar () -> Ptr Float -> Ptr Float -> FrameCount
-     -> Maybe StreamCallbackTimeInfo -> StreamCallbackFlags -> IO StreamCallbackResult
+            -> Maybe StreamCallbackTimeInfo -> StreamCallbackFlags -> IO StreamCallbackResult
 feedSong volFact ref sync _ outPtr frameCount _ _ = do
   states <- readIORef ref
   if null states
@@ -63,9 +67,9 @@ feedSong volFact ref sync _ outPtr frameCount _ _ = do
                   Nothing -> if not (null states)
                              then fill (cnt,ptr,states)
                              else return Complete
-                  Just ((l,r),s') -> do poke ptr (l*volFact)
-                                        poke (plusPtr ptr 4) (r*volFact)
-                                        fill (cnt-1,plusPtr ptr 8,s':states)
+                  Just (Smp l r,s') -> do poke ptr (l*volFact)
+                                          pokeElemOff ptr 1 (r*volFact)
+                                          fill (cnt-1,advancePtr ptr 2,s':states)
                 else do writeIORef ref (s:states)
                         return Continue
 
@@ -146,33 +150,36 @@ startState numChn = PS { psTempo = 6
 
 mixGenerator :: PlayState -> MixState
 mixGenerator state = (tickLength (psBPM state), channels)
-  where channels = [(csWaveData cs, csSubSample cs, csSampleStep cs,
-                     clampVolume (csVolume cs + csTremoloDiff cs),
-                     csPanning cs) | cs <- psChannels state]
+  where channels = [(wd, csSubSample cs, csSampleStep cs, vol, csPanning cs) |
+                    cs <- psChannels state,
+                    let wd = csWaveData cs, not (null wd),
+                    let vol = clampVolume (csVolume cs + csTremoloDiff cs), vol > 0.001]
 
-nextSample :: MixState -> Maybe ((Float, Float), MixState)
+nextSample :: MixState -> Maybe (Sample, MixState)
 nextSample (0, _) = Nothing
 nextSample (cnt, dat) = cnt' `seq` dat' `seq` smp `seq` Just (smp, (cnt', dat'))
   where cnt' = cnt-1
-        (smp, dat') = accum dat [] (0,0)
+        (smp, dat') = accum dat [] (Smp 0 0)
         accum [] cs acc = (acc,cs)
-        accum (d@(wd,wcnt,step,vol,pan):dat) cs acc@(ml,mr) =
+        accum (d@(wd,wcnt,step,vol,pan):dat) cs acc@(Smp ml mr) =
           if null wd then accum dat (d:cs) acc
           else acc' `seq` c `seq` accum dat (c:cs) acc'
             where c = wd' `seq` wcnt' `seq` (wd',wcnt',step,vol,pan)
                   wsmp = head wd*vol
-                  ml' = ml+wsmp*(1-pan)
-                  mr' = mr+wsmp*pan
-                  acc' = ml' `seq` mr' `seq` (ml',mr')
+                  acc' = Smp (ml+wsmp*(1-pan)) (mr+wsmp*pan)
                   (wd',wcnt') = adv wd (wcnt+step) -- because properFraction is too slow
                   adv [] s = ([],s)
                   adv ws s | s >= 1    = adv (tail ws) (s-1)
                            | otherwise = (ws,s)
 
 mixSong :: Song -> [(PlayState, [[Float]])]
-mixSong song = (map.fmap.map) (\(sl,sr) -> [chnFact*sl,chnFact*sr]) . map mixChunk . expandSong $ song
+mixSong song = (map.fmap.map) (\(Smp sl sr) -> [chnFact*sl,chnFact*sr]) . map (id &&& mixChunk) . expandSong $ song
   where chnFact = 1 / fromIntegral (numChannels song)
 
+mixChunk :: PlayState -> [Sample]
+mixChunk = unfoldr nextSample . mixGenerator
+
+{-
 mixChunk :: PlayState -> (PlayState, [(Float, Float)])
 mixChunk state = (state,mixedChannels)
   where mixedChannels = foldl' addChannel emptyChannel (psChannels state)
@@ -191,6 +198,7 @@ mixChunk state = (state,mixedChannels)
                         adv [] s = ([],s)
                         adv ws s | s >= 1    = adv (tail ws) (s-1)
                                  | otherwise = (ws,s)
+-}
 
 expandSong :: Song -> [PlayState]
 expandSong = expandTicks . flattenSong
