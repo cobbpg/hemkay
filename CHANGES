@@ -1,0 +1,8 @@
+0.2.0 - 091220
+* moved the device independent logic into a separate package (hemkay-core)
+* changed display to actual row data instead of player state
+
+0.1.0 - 091214
+* initial release
+* almost complete MOD support
+* poor performance
