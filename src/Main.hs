@@ -1,23 +1,33 @@
-import Control.Monad
-import Control.Monad.Fix
+import Control.Concurrent.MVar
+import Data.IORef
+import Foreign.Ptr
 import Sound.Hemkay.Loader
 import Sound.Hemkay.Mixer
-import Sound.PortAudio hiding (chunk)
+import Sound.PortAudio
 import System.Environment
+
+bufLength :: Int
+bufLength = 0x1000
 
 main :: IO ()
 main = do
   args <- getArgs
   song <- loadModule (head args)
-  withPortAudio $
-    withDefaultStream 0 2 paFloat32 (realToFrac sampleFrequency) 0x1000 $ \stream _ -> do
-      flip fix (mixSong song) $ \playback chunks -> unless (null chunks) $ do
-        let (state,chunk):songRest = chunks
-        flip fix chunk $ \push chk -> unless (null chk) $ do
-          Right len <- getStreamWriteAvailable stream
-          let (pre,rest) = splitAt len chk
-          writeStream stream (map (\(Smp sl sr) -> [sl,sr]) pre) len
-          push rest
-        putStr (show state)
-        playback songRest
+  songRef <- newIORef . map prepareMix . performSong $ song
+  sync <- newEmptyMVar
+  withPortAudio $ withDefaultStream 0 2 [Float32] (realToFrac sampleFrequency) bufLength
+    (Just (feedSong songRef sync)) (const (takeMVar sync))
   return ()
+
+feedSong :: IORef SongMixState -> MVar () -> Ptr Float -> Ptr Float -> FrameCount
+            -> Maybe StreamCallbackTimeInfo -> StreamCallbackFlags -> IO StreamCallbackResult
+feedSong ref sync _ outPtr _ _ _ = do
+  mixState <- readIORef ref
+  res <- mixToBuffer outPtr bufLength mixState
+  case res of
+    Nothing -> do
+      putMVar sync ()
+      return Complete
+    Just mixState' -> do
+      writeIORef ref mixState'
+      return Continue
