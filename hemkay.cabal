@@ -1,5 +1,5 @@
 Name:                hemkay
-Version:             0.2.0
+Version:             0.3.0
 Cabal-Version:       >= 1.2
 Synopsis:            A module music mixer and player
 Category:            sound, music
@@ -11,8 +11,8 @@ Description:
   with different numbers of channels.
 
 Author:              Patai Gergely
-Maintainer:          Patai Gergely (patai@iit.bme.hu)
-Copyright:           (c) 2009, Patai Gergely
+Maintainer:          Patai Gergely (patai.gergely@gmail.com)
+Copyright:           (c) 2009-2011, Patai Gergely
 License:             BSD3
 License-File:        LICENSE
 Stability:           experimental
@@ -25,5 +25,5 @@ Executable hemkay
   Executable:     hemkay
   HS-Source-Dirs: src
   Main-IS:        Main.hs
-  Build-Depends:  base >= 4 && < 5, array, bytestring, binary, portaudio, hemkay-core
+  Build-Depends:  base >= 4 && < 5, array, bytestring, binary, OpenAL, hemkay-core
   GHC-Options:    -Wall -O2
